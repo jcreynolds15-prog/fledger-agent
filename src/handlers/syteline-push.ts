@@ -11,6 +11,11 @@ import { logger } from '../logger';
 // ─── Types mirrored from fledger-app ─────────────────────────────────────────
 
 export interface InvoiceLine {
+  /**
+   * The PO this line is against. An invoice covering several POs is one
+   * voucher whose lines name their own POs; when absent, the header's PO.
+   */
+  po_num?: string;
   /** Optional: matched PO line number */
   po_line?: number;
   /** Optional: matched PO release number */
@@ -139,11 +144,12 @@ export async function pushInvoice(cfg: SqlConfig, payload: PushInvoicePayload): 
     // ── 3. Insert vch_item_mst lines ──────────────────────────────────────
     for (let seq = 0; seq < payload.lines.length; seq++) {
       const line = payload.lines[seq];
+      const linePo = line.po_num ?? payload.po_num ?? '';
 
       const lineReq = tx.request();
       lineReq.input('site_ref',    sql.NVarChar(10),  site);
       lineReq.input('voucher',     sql.Int,            voucher);
-      lineReq.input('po_num',      sql.NVarChar(15),   payload.po_num ?? '');
+      lineReq.input('po_num',      sql.NVarChar(15),   linePo);
       lineReq.input('po_line',     sql.Int,            line.po_line ?? 0);
       lineReq.input('po_release',  sql.Int,            line.po_release ?? 0);
       lineReq.input('item',        sql.NVarChar(30),   line.item ?? '');
@@ -172,10 +178,10 @@ export async function pushInvoice(cfg: SqlConfig, payload: PushInvoicePayload): 
       `);
 
       // ── 4. Update po_vch_mst qty_vouchered for matched receipt lines ───
-      if (line.po_line && line.po_release !== undefined && payload.po_num) {
+      if (line.po_line && line.po_release !== undefined && linePo) {
         const updReq = tx.request();
         updReq.input('site_ref',    sql.NVarChar(10),  site);
-        updReq.input('po_num',      sql.NVarChar(15),  payload.po_num);
+        updReq.input('po_num',      sql.NVarChar(15),  linePo);
         updReq.input('po_line',     sql.Int,           line.po_line);
         updReq.input('po_release',  sql.Int,           line.po_release ?? 0);
         updReq.input('qty_vch',     sql.Decimal(15, 4),line.quantity);
