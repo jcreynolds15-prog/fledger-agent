@@ -1,4 +1,8 @@
 node_modules/
 dist/
+build/
+release/
 .env
+agent.env
+logs/
 *.log

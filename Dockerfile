@@ -22,7 +22,7 @@ RUN npm ci --omit=dev --ignore-scripts
 COPY --from=builder /app/dist ./dist
 
 # Drop root privileges
-RUN addgroup -S fledger && adduser -S fledger -G fledger
-USER fledger
+RUN addgroup -S agent && adduser -S agent -G agent
+USER agent
 
 CMD ["node", "dist/index.js"]

@@ -1,21 +1,66 @@
-import { loadConfig } from './config';
-import { logger, setLogLevel } from './logger';
-import { FledgerAgent } from './agent';
+import * as path from 'path';
+import { AgentConfig, ConfigError, loadConfig, sqlLogin, sqlTarget } from './config';
+import { logger, logToFiles, setLogLevel } from './logger';
+import { ApAutomationAgent } from './agent';
+import { selfTest } from './self-test';
+import { EXIT_BAD_SETTINGS, supervise } from './supervisor';
+import { AGENT_NAME, AGENT_VERSION, homeDir } from './paths';
+
+const USAGE = `${AGENT_NAME} ${AGENT_VERSION}
+
+  ap-automation-agent.exe            run in this window (Ctrl+C to stop)
+  ap-automation-agent.exe --test     check the settings in agent.env, then exit
+  ap-automation-agent.exe --service  run in the background, restarting if it stops
+                                     (what the scheduled task created by install.cmd runs)
+  --config <file>                    read settings from <file> instead of agent.env
+`;
 
 async function main(): Promise<void> {
-  const cfg = loadConfig();
+  const argv = process.argv;
+  if (argv.includes('--version')) {
+    console.log(`${AGENT_NAME} ${AGENT_VERSION}`);
+    return;
+  }
+  if (argv.includes('--help') || argv.includes('/?')) {
+    console.log(USAGE);
+    return;
+  }
+
+  if (!argv.includes('--test')) logToFiles(path.join(homeDir(), 'logs'));
+
+  if (argv.includes('--service')) {
+    logger.info(`${AGENT_NAME} ${AGENT_VERSION} starting in the background`);
+    supervise(argv);
+    return;
+  }
+
+  let cfg: AgentConfig;
+  try {
+    cfg = loadConfig(argv);
+  } catch (err) {
+    if (!(err instanceof ConfigError)) throw err;
+    logger.error(`Settings problem: ${err.message}`);
+    process.exit(EXIT_BAD_SETTINGS);
+  }
   setLogLevel(cfg.logLevel);
 
+  if (argv.includes('--test')) {
+    const ok = await selfTest(cfg);
+    process.exit(ok ? 0 : 1);
+  }
+
   logger.info('═══════════════════════════════════════════');
-  logger.info('  Fledger Connector Agent  v1.0.0');
+  logger.info(`  ${AGENT_NAME}  v${AGENT_VERSION}`);
   logger.info('═══════════════════════════════════════════');
-  logger.info(`  Server  : ${cfg.serverUrl}`);
-  logger.info(`  DB host : ${cfg.sql.server}:${cfg.sql.port}`);
+  logger.info(`  Server  : ${cfg.serverUrl}${cfg.proxyUrl ? ' (through the proxy)' : ''}`);
+  logger.info(`  SQL     : ${sqlTarget(cfg.sql)} as ${sqlLogin(cfg.sql)}`);
   logger.info(`  Database: ${cfg.sql.database}`);
-  logger.info(`  Site    : ${cfg.sql.site || '(all)'}`);
+  logger.info(`  Site    : ${cfg.sql.site || '(the only one)'}`);
+  logger.info(`  Vouchers: ${cfg.sql.allowVouchers ? 'posting on' : 'posting off'}`);
+  logger.info(`  Settings: ${cfg.file ?? '(environment)'}`);
   logger.info('─────────────────────────────────────────────');
 
-  const agent = new FledgerAgent(cfg);
+  const agent = new ApAutomationAgent(cfg);
   agent.start();
 
   // Graceful shutdown
@@ -27,6 +72,8 @@ async function main(): Promise<void> {
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT',  () => shutdown('SIGINT'));
+  // Started by --service: stop when it does.
+  if (process.send) process.on('disconnect', () => shutdown('service stop'));
   process.on('uncaughtException', (err) => {
     logger.error('Uncaught exception:', err);
     process.exit(1);
@@ -37,6 +84,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error('Failed to start agent:', err);
+  logger.error('Failed to start agent:', err);
   process.exit(1);
 });

@@ -5,8 +5,11 @@
  */
 import * as sql from 'mssql';
 import { v4 as uuidv4 } from 'uuid';
+import * as os from 'os';
 import { SqlConfig } from '../config';
 import { logger } from '../logger';
+import { poolConfig, tbl as db } from '../sql';
+import { sitesIn } from '../readiness';
 
 // ─── Types mirrored from fledger-app ─────────────────────────────────────────
 
@@ -60,43 +63,31 @@ export interface PushInvoiceResult {
 
 // ─── Push function ────────────────────────────────────────────────────────────
 
-function buildPoolConfig(cfg: SqlConfig): sql.config {
-  const base: sql.config = {
-    server: cfg.server,
-    port: cfg.port,
-    database: cfg.database,
-    options: {
-      encrypt: false,
-      trustServerCertificate: true,
-    },
-    pool: { max: 3, min: 0, idleTimeoutMillis: 30_000 },
-    connectionTimeout: 15_000,
-    requestTimeout: 60_000,
-  };
-  if (cfg.windowsAuth) {
-    base.options = { ...base.options, trustedConnection: true };
-  } else {
-    base.user = cfg.user;
-    base.password = cfg.password;
-  }
-  return base;
-}
-
-function db(cfg: SqlConfig, table: string): string {
-  return `[${cfg.database}].[dbo].[${table}]`;
-}
-
 export async function pushInvoice(cfg: SqlConfig, payload: PushInvoicePayload): Promise<PushInvoiceResult> {
+  if (!cfg.allowVouchers) {
+    throw new Error(
+      `Posting to SyteLine is switched off on the AP Automation Agent on ${os.hostname()}. ` +
+        'Set ALLOW_VOUCHERS=true in its agent.env and restart it once posting has been tried on your pilot database.',
+    );
+  }
   logger.info(`[push] invoice start — vendor=${payload.vend_num} inv=${payload.inv_num}`);
 
-  const pool = await new sql.ConnectionPool(buildPoolConfig(cfg)).connect();
+  const pool = await new sql.ConnectionPool(poolConfig(cfg, 3)).connect();
   const tx = pool.transaction();
 
   try {
-    await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
-
-    const site = cfg.site || 'MAIN';
+    // Without MSSQL_SITE, the database's only site; never a guess.
+    let site = cfg.site;
+    if (!site) {
+      const sites = await sitesIn(pool);
+      if (sites.length !== 1) {
+        throw new Error(`Set MSSQL_SITE in agent.env: this database holds ${sites.length ? `sites ${sites.join(', ')}` : 'no sites'}.`);
+      }
+      site = sites[0];
+    }
     const safeSite = site.replace(/'/g, "''");
+
+    await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
     // ── 1. Allocate next voucher number atomically ────────────────────────
     const allocRes = await tx.request().query<{ next_voucher: number }>(`
@@ -211,7 +202,7 @@ export async function pushInvoice(cfg: SqlConfig, payload: PushInvoicePayload): 
     };
   } catch (err) {
     logger.error('[push] invoice failed, rolling back', err);
-    try { await tx.rollback(); } catch { /* already rolled back */ }
+    try { await tx.rollback(); } catch { /* not begun, or already rolled back */ }
     throw err;
   } finally {
     await pool.close();

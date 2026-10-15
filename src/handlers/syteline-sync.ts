@@ -1,46 +1,11 @@
 /**
  * SyteLine sync handlers — run on the agent (on-premise).
  * Each function opens its own mssql connection, queries, and returns plain data
- * that is serialised and sent back to the Fledger SaaS over WebSocket.
+ * that is serialised and sent back to AP Automation over the WebSocket.
  */
-import * as sql from 'mssql';
 import { SqlConfig } from '../config';
 import { logger } from '../logger';
-
-// ─── connection pool factory ────────────────────────────────────────────────
-
-function buildPoolConfig(cfg: SqlConfig): sql.config {
-  const base: sql.config = {
-    server: cfg.server,
-    port: cfg.port,
-    database: cfg.database,
-    options: {
-      encrypt: false,               // typical on-prem; set true for Azure SQL
-      trustServerCertificate: true, // self-signed certs common on-prem
-    },
-    pool: { max: 5, min: 0, idleTimeoutMillis: 30_000 },
-    connectionTimeout: 15_000,
-    requestTimeout: 60_000,
-  };
-
-  if (cfg.windowsAuth) {
-    base.options = { ...base.options, trustedConnection: true };
-  } else {
-    base.user = cfg.user;
-    base.password = cfg.password;
-  }
-
-  return base;
-}
-
-async function withPool<T>(cfg: SqlConfig, fn: (pool: sql.ConnectionPool) => Promise<T>): Promise<T> {
-  const pool = await new sql.ConnectionPool(buildPoolConfig(cfg)).connect();
-  try {
-    return await fn(pool);
-  } finally {
-    await pool.close();
-  }
-}
+import { withPool, tbl } from '../sql';
 
 // ─── site qualifier helper ───────────────────────────────────────────────────
 
@@ -49,11 +14,6 @@ function siteWhere(cfg: SqlConfig, alias = ''): string {
   const col = alias ? `${alias}.site_ref` : 'site_ref';
   const safe = cfg.site.replace(/'/g, "''");
   return `AND ${col} = N'${safe}'`;
-}
-
-/** Wraps a table name with the configured database prefix if set */
-function tbl(cfg: SqlConfig, table: string): string {
-  return `[${cfg.database}].[dbo].[${table}]`;
 }
 
 // ─── Vendor sync ─────────────────────────────────────────────────────────────
@@ -335,18 +295,4 @@ export async function syncReceipts(cfg: SqlConfig): Promise<AgentReceipt[]> {
     logger.info(`[sync] receipts done — ${result.length} GRNs`);
     return result;
   });
-}
-
-// ─── Connection test ──────────────────────────────────────────────────────────
-
-export async function testConnection(cfg: SqlConfig): Promise<{ ok: boolean; message: string }> {
-  try {
-    await withPool(cfg, async (pool) => {
-      await pool.request().query('SELECT 1 AS ping');
-    });
-    return { ok: true, message: 'Connected successfully' };
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return { ok: false, message: msg };
-  }
 }
