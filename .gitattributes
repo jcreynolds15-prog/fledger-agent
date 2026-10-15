@@ -1,0 +1,4 @@
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+windows/*.txt text eol=crlf
+windows/*.example text eol=crlf
