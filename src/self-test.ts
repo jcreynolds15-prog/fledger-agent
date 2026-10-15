@@ -1,11 +1,12 @@
 /**
- * `ap-automation-agent.exe --test`: checks SQL Server and AP Automation can
- * both be reached with the settings in agent.env, and says what to fix.
+ * `ap-automation-agent.exe --test`: checks SyteLine (its IDO service and/or
+ * SQL database) and AP Automation can be reached with the settings in
+ * agent.env, and says what to fix.
  */
 import { io } from 'socket.io-client';
 import { AgentConfig, sqlLogin, sqlTarget } from './config';
 import { serverHint, socketOptions } from './connection';
-import { checkReadiness, CheckStatus } from './readiness';
+import { Check, checkReadiness, CheckStatus } from './readiness';
 import { AGENT_NAME, AGENT_VERSION } from './paths';
 
 const TAG: Record<CheckStatus, string> = { ok: '[ OK ]', warn: '[WARN]', fail: '[FAIL]', info: '[ -- ]' };
@@ -52,9 +53,20 @@ export async function selfTest(cfg: AgentConfig): Promise<boolean> {
   console.log(`Settings: ${cfg.file ?? '(environment variables)'}`);
   console.log('');
 
-  console.log(`SyteLine database — ${sqlTarget(cfg.sql)} / ${cfg.sql.database} as ${sqlLogin(cfg.sql)}`);
-  const readiness = await checkReadiness(cfg.sql);
-  for (const c of readiness.checks) print(c.status, c.text);
+  const sections: { ido?: Check[]; sql?: Check[] } = {};
+  const readiness = await checkReadiness(cfg, sections);
+  if (cfg.ido) {
+    console.log(`SyteLine IDO service — ${cfg.ido.url} as ${cfg.ido.user} (configuration ${cfg.ido.config})`);
+    for (const c of sections.ido ?? []) print(c.status, c.text);
+    console.log('');
+  }
+  if (cfg.sql) {
+    console.log(`SyteLine database — ${sqlTarget(cfg.sql)} / ${cfg.sql.database} as ${sqlLogin(cfg.sql)}`);
+    for (const c of sections.sql ?? []) print(c.status, c.text);
+    console.log('');
+  }
+  const posting = readiness.checks[readiness.checks.length - 1];
+  print(posting.status, posting.text);
   console.log('');
 
   console.log(`AP Automation — ${cfg.serverUrl}${cfg.proxyUrl ? ' (through the proxy)' : ''}`);

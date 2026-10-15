@@ -15,7 +15,7 @@ import { AGENT_VERSION } from './paths';
  * that inspects TLS with the company's own root certificate is trusted the
  * same way the browsers on that server trust it. TLS_CA_FILE adds one more.
  */
-function trustedCertificates(cfg: AgentConfig): string[] {
+export function trustedCertificates(caFile = ''): string[] {
   const certs = [...tls.rootCertificates];
   const fromStore = (tls as unknown as { getCACertificates?: (type: string) => string[] }).getCACertificates;
   if (fromStore) {
@@ -25,18 +25,21 @@ function trustedCertificates(cfg: AgentConfig): string[] {
       /* no readable system store */
     }
   }
-  if (cfg.caFile) certs.push(fs.readFileSync(cfg.caFile, 'utf8'));
+  if (caFile) certs.push(fs.readFileSync(caFile, 'utf8'));
   return certs;
 }
 
 export function socketOptions(cfg: AgentConfig, { probe = false } = {}): Partial<ManagerOptions & SocketOptions> {
-  const ca = trustedCertificates(cfg);
+  const ca = trustedCertificates(cfg.caFile);
   const options: Record<string, unknown> = {
     path: '/agent',
     auth: {
       agent_key: cfg.agentKey,
       version: AGENT_VERSION,
       host: os.hostname(),
+      // What AP Automation can ask it for
+      ido: !!cfg.ido,
+      sql: !!cfg.sql,
       // A probe (--test) checks the key without taking over from the running agent.
       ...(probe ? { probe: true } : {}),
     },

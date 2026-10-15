@@ -1,6 +1,6 @@
 {
   "name": "ap-automation-agent",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "AP Automation on-site agent: connects Infor SyteLine (SQL Server) to AP Automation over one outbound connection",
   "main": "dist/index.js",
   "scripts": {

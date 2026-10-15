@@ -53,10 +53,9 @@ async function main(): Promise<void> {
   logger.info(`  ${AGENT_NAME}  v${AGENT_VERSION}`);
   logger.info('═══════════════════════════════════════════');
   logger.info(`  Server  : ${cfg.serverUrl}${cfg.proxyUrl ? ' (through the proxy)' : ''}`);
-  logger.info(`  SQL     : ${sqlTarget(cfg.sql)} as ${sqlLogin(cfg.sql)}`);
-  logger.info(`  Database: ${cfg.sql.database}`);
-  logger.info(`  Site    : ${cfg.sql.site || '(the only one)'}`);
-  logger.info(`  Vouchers: ${cfg.sql.allowVouchers ? 'posting on' : 'posting off'}`);
+  if (cfg.ido) logger.info(`  IDO     : ${cfg.ido.url} as ${cfg.ido.user} (configuration ${cfg.ido.config})`);
+  if (cfg.sql) logger.info(`  SQL     : ${sqlTarget(cfg.sql)} / ${cfg.sql.database} as ${sqlLogin(cfg.sql)}, site ${cfg.sql.site || '(the only one)'}`);
+  logger.info(`  Vouchers: ${cfg.allowVouchers ? 'posting allowed' : 'posting off'}`);
   logger.info(`  Settings: ${cfg.file ?? '(environment)'}`);
   logger.info('─────────────────────────────────────────────');
 

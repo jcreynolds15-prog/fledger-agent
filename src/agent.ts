@@ -6,12 +6,12 @@
  * SQL credentials stay on-premise and are never sent to the cloud.
  */
 import { io, Socket } from 'socket.io-client';
-import { AgentConfig } from './config';
+import { AgentConfig, IdoConfig, SqlConfig } from './config';
 import { logger } from './logger';
 import { socketOptions, serverHint } from './connection';
 import { syncVendors, syncPurchaseOrders, syncReceipts } from './handlers/syteline-sync';
-import { pushInvoice, PushInvoicePayload } from './handlers/syteline-push';
 import { checkReadiness } from './readiness';
+import { relay, signIn } from './ido';
 
 // ─── Job payload types ─────────────────────────────────────────────────────────
 
@@ -113,34 +113,49 @@ export class ApAutomationAgent {
 
   // ── Job dispatcher ────────────────────────────────────────────────────────────
 
+  private get idoCfg(): IdoConfig {
+    if (!this.cfg.ido) throw new Error("This agent is not set up for SyteLine's IDO service: IDO_URL is not set in its agent.env.");
+    return this.cfg.ido;
+  }
+
+  private get sqlCfg(): SqlConfig {
+    if (!this.cfg.sql) throw new Error("This agent is not set up for SyteLine's SQL database: MSSQL_SERVER is not set in its agent.env.");
+    return this.cfg.sql;
+  }
+
   private async handleJob(jobId: string, action: string, payload: unknown): Promise<void> {
-    logger.info(`Job ${jobId}: ${action}`);
-    const sqlCfg = this.cfg.sql;
+    // IDO requests are many and small: log them at debug level only.
+    const log = action === 'ido_request' ? logger.debug : logger.info;
+    log(`Job ${jobId}: ${action}${action === 'ido_request' ? ` ${(payload as { operation?: string })?.operation}` : ''}`);
 
     try {
       let result: unknown;
 
       switch (action) {
         case 'test_connection': {
-          const readiness = await checkReadiness(sqlCfg);
+          const readiness = await checkReadiness(this.cfg);
           result = { ok: readiness.ok, message: readiness.summary };
           break;
         }
 
+        case 'ido_token':
+          result = { token: await signIn(this.idoCfg) };
+          break;
+
+        case 'ido_request':
+          result = await relay(this.idoCfg, this.cfg.allowVouchers, payload as { operation?: string; envelope?: string });
+          break;
+
         case 'sync_vendors':
-          result = await syncVendors(sqlCfg);
+          result = await syncVendors(this.sqlCfg);
           break;
 
         case 'sync_purchase_orders':
-          result = await syncPurchaseOrders(sqlCfg);
+          result = await syncPurchaseOrders(this.sqlCfg);
           break;
 
         case 'sync_receipts':
-          result = await syncReceipts(sqlCfg);
-          break;
-
-        case 'push_invoice':
-          result = await pushInvoice(sqlCfg, payload as PushInvoicePayload);
+          result = await syncReceipts(this.sqlCfg);
           break;
 
         default:
@@ -148,7 +163,7 @@ export class ApAutomationAgent {
       }
 
       this.socket?.emit('result', { job_id: jobId, data: result });
-      logger.info(`Job ${jobId}: completed`);
+      log(`Job ${jobId}: completed`);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error(`Job ${jobId} failed:`, message);

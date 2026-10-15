@@ -1,7 +1,7 @@
 import * as path from 'path';
 
 export const AGENT_NAME = 'AP Automation Agent';
-export const AGENT_VERSION = '1.1.0';
+export const AGENT_VERSION = '1.2.0';
 
 /** True when running as the packaged Windows executable (a Node single-executable app). */
 export function isPackaged(): boolean {
